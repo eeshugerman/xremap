@@ -63,29 +63,29 @@ sudo xremap config.yml
 
 ### Running xremap without sudo
 
-To do so, your normal user should be able to use `evdev` and `uinput` without sudo.
-In Ubuntu, this can be configured by running the following commands and rebooting your machine.
+To do so, your normal user should be able to use `evdev` and `uinput` without sudo. Typically this
+means adding your user to the `input` group, adding a udev rule granting RW `uinput` permissions
+to the `input` group`, and rebooting.
+
+#### Ubuntu
 
 ```bash
-sudo gpasswd -a YOUR_USER input
+sudo gpasswd -a $USER input
 echo 'KERNEL=="uinput", GROUP="input", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/input.rules
 ```
 
 #### Arch Linux
-
-The following can be used on Arch.
-
+```bash
+sudo gpasswd -a $USER input
+echo 'KERNEL=="uinput", GROUP="input", MODE="0660"' | sudo tee /etc/udev/rules.d/99-input.rules
+```
+Additionally, on Arch, you may need to load the `uinput` module. First check if it's loaded:
 ```bash
 lsmod | grep uinput
 ```
-If this module is not loaded, add to `/etc/modules-load.d/uinput.conf`:
+If `grep` prints no lines then the module is not loaded and you need to change that:
 ```bash
-uinput
-```
-Then add udev rule.
-
-```bash
-echo 'KERNEL=="uinput", GROUP="input", MODE="0660"' | sudo tee /etc/udev/rules.d/99-input.rules
+echo 'uinput' | sudo tee /etc/modules-load.d/uinput.conf
 ```
 
 #### Other platforms
