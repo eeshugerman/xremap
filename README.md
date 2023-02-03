@@ -126,6 +126,29 @@ Update `/usr/share/dbus-1/session.conf` as follows, and reboot your machine.
 
 </details>
 
+
+### Start `xremap` at login
+If you're setup to run `xremap` without `sudo`, you can define a systemd user service to do so at login.
+Here's a simple example:
+```conf
+# ~/.config/systemd/user/xremap.service
+[Unit]
+Description=xremap
+
+[Service]
+Restart=always
+ExecStart=xremap --watch=device %h/.config/xremap.yml
+
+[Install]
+WantedBy=default.target
+```
+
+Then enable and start the service:
+```bash
+systemctl --user enable xremap
+systemctl --user start xremap
+```
+
 ## Configuration
 Your `config.yml` should look like this:
 
