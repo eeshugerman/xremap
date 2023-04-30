@@ -7,7 +7,7 @@ use crate::config::keymap_action::KeymapAction;
 use crate::config::modmap_action::{ModmapAction, MultiPurposeKey, PressReleaseKey};
 use crate::config::remap::Remap;
 use crate::device::InputDevice;
-use crate::event::{Event, KeyEvent, RelativeEvent};
+use crate::event::{Event, KeyEvent, RelativeEvent, KeyValue};
 use crate::{Config, config};
 use evdev::Key;
 use lazy_static::lazy_static;
@@ -85,15 +85,15 @@ impl EventHandler {
         let mut mouse_movement_collection: Vec<RelativeEvent> = Vec::new();
         for event in events {
             match event {
-                Event::KeyEvent(device, key_event) => {
-                    self.on_key_event(key_event, config, device)?;
+                Event::KeyEvent(key_event) => {
+                    self.on_key_event(key_event, config)?;
                     ()
                 }
-                Event::RelativeEvent(device, relative_event) => {
-                    self.on_relative_event(relative_event, &mut mouse_movement_collection, config, device)?
+                Event::RelativeEvent(relative_event) => {
+                    self.on_relative_event(relative_event, &mut mouse_movement_collection, config)?
                 }
 
-                Event::OtherEvents(_device, event) => self.send_action(Action::InputEvent(*event)),
+                Event::OtherEvents(event) => self.send_action(Action::InputEvent(*event)),
                 Event::OverrideTimeout => self.timeout_override()?,
             };
         }
@@ -105,13 +105,13 @@ impl EventHandler {
     }
 
     // Handle EventType::KEY
-    fn on_key_event(&mut self, event: &KeyEvent, config: &Config, device: &InputDevice) -> Result<bool, Box<dyn Error>> {
+    fn on_key_event(&mut self, event: &KeyEvent, config: &Config) -> Result<bool, Box<dyn Error>> {
         self.application_cache = None; // expire cache
         let key = Key::new(event.code());
         debug!("=> {}: {:?}", event.value(), &key);
 
         // Apply modmap
-        let mut key_values = if let Some(key_action) = self.find_modmap(config, &key, device) {
+        let mut key_values = if let Some(key_action) = self.find_modmap(config, &event) {
             self.dispatch_keys(key_action, key, event.value())?
         } else {
             vec![(key, event.value())]
@@ -132,7 +132,7 @@ impl EventHandler {
             } else if is_pressed(value) {
                 if self.escape_next_key {
                     self.escape_next_key = false
-                } else if let Some(actions) = self.find_keymap(config, event, device)? {
+                } else if let Some(actions) = self.find_keymap(config, event)? {
                     self.dispatch_actions(&actions, &key)?;
                     continue;
                 }
@@ -159,7 +159,6 @@ impl EventHandler {
         event: &RelativeEvent,
         mouse_movement_collection: &mut Vec<RelativeEvent>,
         config: &Config,
-        device: &InputDevice
     ) -> Result<(), Box<dyn Error>> {
         // Because a "full" RELATIVE event is only one event,
         // it doesn't translate very well into a KEY event (because those have a "press" event and an "unpress" event).
@@ -201,12 +200,12 @@ impl EventHandler {
         };
 
         // Sending a RELATIVE event "disguised" as a "fake" KEY event press to on_key_event.
-        match self.on_key_event(&KeyEvent::new_with(key, PRESS), config, device)? {
+        match self.on_key_event(&KeyEvent::new_with(event.device, key, PRESS), config)? {
             // the boolean value is from a variable at the end of on_key_event from event_handler,
             // used to indicate whether the event got through unchanged.
             true => {
                 // Sending the original RELATIVE event if the "press" version of the "fake" KEY event got through on_key_event unchanged.
-                let action = RelativeEvent::new_with(event.code, event.value);
+                let action = RelativeEvent::new_with(event.device, event.code, event.value);
                 if event.code <= 2 {
                     // If it's a mouse movement event (event.code <= 2),
                     // it is added to mouse_movement_collection to later be sent alongside all other mouse movement event,
@@ -230,7 +229,7 @@ impl EventHandler {
         }
 
         // Sending the "unpressed" version of the "fake" KEY event.
-        self.on_key_event(&KeyEvent::new_with(key, RELEASE), config, device)?;
+        self.on_key_event(&KeyEvent::new_with(event.device, key, RELEASE), config)?;
 
         Ok(())
     }
@@ -257,9 +256,8 @@ impl EventHandler {
     }
 
     fn send_key(&mut self, key: &Key, value: i32) {
-        // let event = InputEvent::new(EventType::KEY, key.code(), value);
-        let event = KeyEvent::new_with(key.code(), value);
-        self.send_action(Action::KeyEvent(event));
+        let value = KeyValue::new(value).unwrap();
+        self.send_action(Action::KeyEvent{ key: *key, value });
     }
 
     fn send_action(&mut self, action: Action) {
@@ -366,16 +364,16 @@ impl EventHandler {
         }
     }
 
-    fn find_modmap(&mut self, config: &Config, key: &Key, device: &InputDevice) -> Option<ModmapAction> {
+    fn find_modmap(&mut self, config: &Config, event: &KeyEvent) -> Option<ModmapAction> {
         for modmap in &config.modmap {
-            if let Some(key_action) = modmap.remap.get(key) {
+            if let Some(key_action) = modmap.remap.get(&event.key) {
                 if let Some(application_matcher) = &modmap.application {
                     if !self.match_application(application_matcher) {
                         continue;
                     }
                 }
                 if let Some(device_matcher) = &modmap.device {
-                    if !self.match_device(device_matcher, device) {
+                    if !self.match_device(device_matcher, event.device) {
                         continue;
                     }
                 }
@@ -385,7 +383,7 @@ impl EventHandler {
         None
     }
 
-    fn find_keymap(&mut self, config: &Config, event: &KeyEvent, device: &InputDevice) -> Result<Option<Vec<TaggedAction>>, Box<dyn Error>> {
+    fn find_keymap(&mut self, config: &Config, event: &KeyEvent) -> Result<Option<Vec<TaggedAction>>, Box<dyn Error>> {
         if !self.override_remaps.is_empty() {
             let entries: Vec<OverrideEntry> = self
                 .override_remaps
@@ -443,7 +441,7 @@ impl EventHandler {
                         }
                     }
                     if let Some(device_matcher) = &entry.device {
-                        if !self.match_device(device_matcher, device) {
+                        if !self.match_device(device_matcher, event.device) {
                             continue;
                         }
                     }

@@ -6,23 +6,25 @@ use crate::device::InputDevice;
 #[derive(Debug)]
 pub enum Event<'a> {
     // InputEvent (EventType::KEY) sent from evdev
-    KeyEvent(&'a InputDevice, KeyEvent),
+    KeyEvent(KeyEvent<'a>),
     // InputEvent (EventType::Relative) sent from evdev
-    RelativeEvent(&'a InputDevice, RelativeEvent),
+    RelativeEvent(RelativeEvent<'a>),
     // Any other InputEvent type sent from evdev
-    OtherEvents(&'a InputDevice, InputEvent),
+    OtherEvents(InputEvent),
     // Timer for nested override reached its timeout
     OverrideTimeout,
 }
 
 #[derive(Debug)]
-pub struct KeyEvent {
+pub struct KeyEvent<'a> {
+    pub device: &'a InputDevice,
     pub key: Key,
     value: KeyValue,
 }
 
 #[derive(Debug)]
-pub struct RelativeEvent {
+pub struct RelativeEvent<'a> {
+    pub device: &'a InputDevice,
     pub code: u16,
     pub value: i32,
 }
@@ -35,27 +37,27 @@ pub enum KeyValue {
 }
 impl<'a> Event<'a> {
     // Convert evdev's raw InputEvent to xremap's internal Event
-    pub fn new(device: &'a InputDevice, event: InputEvent) -> Event<'a> {
+    pub fn new(device: &InputDevice, event: InputEvent) -> Event {
         let event = match event.event_type() {
-            EventType::KEY => Event::KeyEvent(device, KeyEvent::new_with(event.code(), event.value())),
-            EventType::RELATIVE => Event::RelativeEvent(device, RelativeEvent::new_with(event.code(), event.value())),
-            _ => Event::OtherEvents(device, event),
+            EventType::KEY => Event::KeyEvent(KeyEvent::new_with(device, event.code(), event.value())),
+            EventType::RELATIVE => Event::RelativeEvent(RelativeEvent::new_with(device, event.code(), event.value())),
+            _ => Event::OtherEvents(event),
         };
         event
     }
 }
 
-impl KeyEvent {
+impl<'a> KeyEvent<'a> {
     // Constructor with newer interface
-    pub fn new(key: Key, value: KeyValue) -> KeyEvent {
-        KeyEvent { key, value }
+    pub fn new(device: &'a InputDevice, key: Key, value: KeyValue) -> KeyEvent {
+        KeyEvent { device, key, value }
     }
 
     // Constructor with legacy interface
-    pub fn new_with(code: u16, value: i32) -> KeyEvent {
+    pub fn new_with(device: &InputDevice, code: u16, value: i32) -> KeyEvent {
         let key = Key::new(code);
         let value = KeyValue::new(value).unwrap();
-        KeyEvent::new(key, value)
+        KeyEvent::new(device, key, value)
     }
 
     pub fn code(&self) -> u16 {
@@ -68,14 +70,14 @@ impl KeyEvent {
 }
 
 // constructor for relative events.
-impl RelativeEvent {
-    pub fn new_with(code: u16, value: i32) -> RelativeEvent {
-        RelativeEvent { code, value }
+impl<'a> RelativeEvent<'a> {
+    pub fn new_with(device: &'a InputDevice, code: u16, value: i32) -> RelativeEvent {
+        RelativeEvent { device, code, value }
     }
 }
 
 impl KeyValue {
-    fn new(value: i32) -> Option<KeyValue> {
+    pub fn new(value: i32) -> Option<KeyValue> {
         let event_value = match value {
             0 => KeyValue::Release,
             1 => KeyValue::Press,
